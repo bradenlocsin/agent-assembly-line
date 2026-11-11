@@ -31,11 +31,12 @@ class Ledger:
     def __init__(self, run_dir: Path):
         self.run_dir = run_dir
         self.entries: list[Entry] = []
+        self._spent = 0.0
         self._fh = open(run_dir / "ledger.jsonl", "a")
 
     @property
     def spent(self) -> float:
-        return sum(e.cost_usd for e in self.entries)
+        return self._spent
 
     def record(self, item_id, station, result, attempt, ok, escalated=False, error=None) -> Entry:
         e = Entry(
@@ -48,6 +49,7 @@ class Ledger:
             latency_s=round(result.latency_s, 3), escalated=escalated, error=error,
         )
         self.entries.append(e)
+        self._spent += e.cost_usd
         self._fh.write(json.dumps(asdict(e)) + "\n")
         self._fh.flush()
         return e

@@ -1,0 +1,35 @@
+{
+  "_README": "Every number in this file is an ASSUMPTION, not a measurement of real Claude behavior. The benchmark's conclusions are only as good as these numbers. Replace them with values measured from real runs (ledger.jsonl gives you tokens, latency and failure rates per station) to make the benchmark meaningful.",
+
+  "schema_fail_rate": {
+    "_note": "Probability a single call returns output that fails JSON/schema validation, for a task of difficulty 1.0. Guesses.",
+    "haiku": 0.08, "sonnet": 0.03, "opus": 0.015, "fable": 0.01
+  },
+  "task_difficulty": {
+    "_note": "Multiplies schema_fail_rate. The all-in-one task's failure chance is derived as 1 - product(1 - p_subtask), i.e. it fails if any part would have failed, times combined_task_penalty.",
+    "enrich": 1.0, "score": 0.5, "draft": 0.8, "inspector": 0.5
+  },
+  "combined_task_penalty": 1.0,
+
+  "output_tokens": {
+    "_note": "Visible output tokens per task. Guesses based on the schemas and prompt length limits.",
+    "enrich": 250, "score": 120, "draft": 220, "inspector": 300, "combined_overhead": 50
+  },
+  "thinking_tokens": {
+    "_note": "Extra billed output tokens for models that think before answering. Unknown in practice; guesses.",
+    "haiku": 0, "sonnet": 0, "opus": 600, "fable": 800
+  },
+
+  "web_search": {
+    "_note": "Tokens of search results injected into the prompt per search, and searches per call. This dominates cost and is the least certain number here.",
+    "searches_per_call": 2,
+    "tokens_per_search": 6000,
+    "latency_s_per_search": 1.5
+  },
+
+  "latency": {
+    "_note": "Time to first token (s) and output tokens/second. Guesses.",
+    "ttft_s": {"haiku": 0.6, "sonnet": 1.2, "opus": 2.0, "fable": 2.5},
+    "tokens_per_s": {"haiku": 150, "sonnet": 70, "opus": 45, "fable": 35}
+  }
+}

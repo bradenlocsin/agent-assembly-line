@@ -39,13 +39,16 @@ class LineSpec:
     inspector: InspectorSpec | None
     concurrency: int = 5
     budget_usd: float = 1.00
+    call_timeout_s: float | None = 300
     output_fields: list[str] | None = None
 
 
 def _read_prompt(base: Path, value: str) -> str:
     """A prompt can be inline text or a path to a .md file in the line folder."""
     p = base / value
-    if value.endswith((".md", ".txt")) and p.exists():
+    if value.endswith((".md", ".txt")):
+        if not p.exists():  # a typo here used to silently become the prompt text itself
+            raise FileNotFoundError(f"Prompt file not found: {p}")
         return p.read_text()
     return value
 
@@ -105,5 +108,6 @@ def load_line(line_dir: str | Path) -> LineSpec:
         inspector=insp,
         concurrency=settings.get("concurrency", 5),
         budget_usd=settings.get("budget_usd", 1.00),
+        call_timeout_s=settings.get("call_timeout_s", 300),
         output_fields=raw.get("output_fields"),
     )

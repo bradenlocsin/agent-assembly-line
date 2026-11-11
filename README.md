@@ -65,8 +65,17 @@ For each input item:
 5. Finished items are randomly sampled (`sample_rate`) by the **inspector**.
 6. If the inspector's defect rate goes above `stop_line_if_defect_rate_above`
    (after at least `min_inspected` checks), the **andon cord is pulled**: no new work starts.
-7. The line also stops when spending hits `budget_usd`. (Calls already in flight finish,
-   so you can overshoot slightly.)
+7. The line also stops when spending hits `budget_usd`. The budget is checked before every
+   call, including retries. Calls already in flight still finish, so the worst-case overshoot is
+   roughly `concurrency` × the cost of one call.
+
+Errors from the API itself:
+- **Timeouts and network errors** are logged and count as a failed attempt, so retry and
+  escalation still apply. Set the per-call limit with `settings.call_timeout_s` (default 300).
+- **Errors that would hit every item** (bad API key, no permission, unknown model, malformed
+  request) stop the line immediately instead of failing item by item.
+- An unexpected crash on one item is recorded in `defects.jsonl` as `failed_at: engine`,
+  and the rest of the run continues. Outputs and the report are always written.
 
 ## What you get in each run
 
@@ -127,6 +136,24 @@ Turns a list of local businesses into scored leads with a drafted outreach email
 
 It **only drafts** emails. Read them before sending anything, and follow CAN-SPAM rules
 (real name and address, honest subject line, an easy way to opt out).
+
+## Benchmarks
+
+`python benchmarks/bench.py` compares the assembly line against a single model doing the
+whole job. **It is a simulation:** failure rates, token counts and latencies come from
+`benchmarks/assumptions.json`, and those numbers are guesses. Latest results are in
+`benchmarks/results/latest.md`. With the current assumptions:
+
+- Engine overhead is about 1 ms per call (actually measured), which is negligible.
+- The line costs about half as much as a single Sonnet doing everything, mostly because Haiku,
+  not Sonnet, reads the web-search results.
+- The line is *not* measurably better than a single Haiku doing everything: they come out about
+  the same on cost and success rate. Whether splitting the job improves output **quality** is
+  unknown until it's tested on real runs.
+- Web-search fees (~$0.02/item) are about 80% of the line's cost, so cutting searches matters
+  more than model choice.
+
+Replace the assumptions with numbers from your own `ledger.jsonl` to make the comparison real.
 
 ## Notes
 

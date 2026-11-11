@@ -5,6 +5,7 @@ name: lead_gen
 settings:
   concurrency: 5
   budget_usd: 2.00
+  call_timeout_s: 300   # per model call; a timeout counts as a failed attempt
 
 stations:
   # Station 1: research. Cheap model + web search.

@@ -68,7 +68,7 @@ def cmd_run(a):
     items = load_items(a.input)
     if a.limit:
         items = items[: a.limit]
-    client = make_client(a.mock)
+    client = make_client(a.mock, seed=a.seed)
     run_dir = asyncio.run(Line(spec, client, Path(a.runs_dir), seed=a.seed).run(items))
     print()
     print((run_dir / "report.md").read_text())
@@ -145,7 +145,7 @@ def main(argv=None):
     r.add_argument("--limit", type=int, help="only run the first N items")
     r.add_argument("--budget", type=float, help="override budget_usd")
     r.add_argument("--concurrency", type=int, help="override concurrency")
-    r.add_argument("--seed", type=int, help="seed for inspector sampling")
+    r.add_argument("--seed", type=int, help="seed for inspector sampling and mock workers (reproducible mock runs)")
     r.add_argument("--runs-dir", default="runs")
     r.set_defaults(fn=cmd_run)
 
