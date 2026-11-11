@@ -9,8 +9,14 @@ git check-ignore -q .env || { echo "Refusing: .env is not gitignored here."; exi
 printf "Paste your OpenRouter API key (input is hidden), then press Enter: "
 read -rs key
 echo
+key="$(printf '%s' "$key" | tr -d '[:space:]')"
 if [[ ! "$key" =~ ^sk-or- ]]; then
   echo "That doesn't look like an OpenRouter key (they start with sk-or-). Nothing saved."
+  exit 1
+fi
+if (( ${#key} < 40 )) || [[ "$key" == *"..."* || "$key" == *"…"* ]]; then
+  echo "That key is only ${#key} characters. It looks like the shortened preview from the key list,"
+  echo "not the full key. Create a new key and use the copy button on the full key. Nothing saved."
   exit 1
 fi
 
