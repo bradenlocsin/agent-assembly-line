@@ -1,0 +1,72 @@
+name: lead_gen
+# Turns a list of local businesses into scored leads with a drafted outreach email
+# for an AI-automation service. Drafts only: nothing gets sent.
+
+settings:
+  concurrency: 5
+  budget_usd: 2.00
+
+stations:
+  # Station 1: research. Cheap model + web search.
+  - name: enrich
+    model: haiku
+    escalate_to: sonnet
+    max_retries: 1
+    max_tokens: 1500
+    tools: [web_search]
+    instructions: prompts/enrich.md
+    output_schema:
+      type: object
+      properties:
+        what_they_do: {type: string}
+        online_booking: {type: string, enum: ["yes", "no", "unknown"]}
+        chat_or_text_widget: {type: string, enum: ["yes", "no", "unknown"]}
+        review_presence: {type: string, enum: ["strong", "some", "weak", "unknown"]}
+        signals: {type: array, items: {type: string}, maxItems: 6}
+      required: [what_they_do, online_booking, chat_or_text_widget, review_presence, signals]
+
+  # Station 2: judgment against a fixed rubric. Still cheap.
+  - name: score
+    model: haiku
+    escalate_to: sonnet
+    instructions: prompts/score.md
+    output_schema:
+      type: object
+      properties:
+        fit_score: {type: integer, minimum: 1, maximum: 10}
+        best_offer:
+          type: string
+          enum: [missed_call_text_back, review_requests, booking_automation, lead_follow_up, none]
+        reasoning: {type: string}
+      required: [fit_score, best_offer, reasoning]
+
+  # Station 3: writing. Worth paying for Sonnet.
+  - name: draft
+    model: sonnet
+    escalate_to: opus
+    max_tokens: 2000
+    instructions: prompts/draft.md
+    output_schema:
+      type: object
+      properties:
+        subject: {type: string, maxLength: 80}
+        email_body: {type: string}
+      required: [subject, email_body]
+
+# The manager: spot-checks finished leads and stops the line if quality tanks.
+inspector:
+  model: opus
+  instructions: prompts/inspector.md
+  max_tokens: 3000   # opus thinks before answering; leave room
+  sample_rate: 0.25
+  min_inspected: 4
+  stop_line_if_defect_rate_above: 0.34
+
+output_fields:
+  - id
+  - input.name
+  - input.city
+  - score.fit_score
+  - score.best_offer
+  - draft.subject
+  - draft.email_body
