@@ -37,7 +37,10 @@ class CallResult:
 class ClaudeClient:
     """Thin async wrapper around the Anthropic SDK."""
 
-    def __init__(self, max_attempts: int = 4):
+    def __init__(self, max_attempts: int = 4, api=None):
+        if api is not None:  # injected SDK client (tests use one with a fake HTTP transport)
+            self.api = api
+            return
         from anthropic import AsyncAnthropic  # imported lazily so mock mode needs no key
 
         self.api = AsyncAnthropic(max_retries=max_attempts)

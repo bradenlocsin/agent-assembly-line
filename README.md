@@ -154,6 +154,23 @@ whole job. **It is a simulation:** failure rates, token counts and latencies com
   more than model choice.
 
 Replace the assumptions with numbers from your own `ledger.jsonl` to make the comparison real.
+**That benchmark has known biases in the line's favor.** See the list in
+`experiments/quality/PROTOCOL.md`; don't cite it as evidence that the line is better.
+
+## Quality experiment (blind, pre-registered)
+
+`experiments/quality/` tests whether the line actually beats one model doing the whole job:
+single Haiku vs single Sonnet vs the assembly line, on 20 fixed leads with evidence packets,
+scored by a blind human reviewer. Start with `PROTOCOL.md`. Commands:
+
+```bash
+python experiments/quality/exp.py estimate --leads 3     # free: cost ceiling
+python experiments/quality/exp.py run --mock --leads 3   # free: dry run
+python experiments/quality/exp.py run --real --leads 3 --approve-max-usd <ceiling>   # paid
+```
+
+Real runs refuse to start without an API key, an explicit `--approve-max-usd` at or above the
+computed ceiling, and typing `SPEND`. They never fall back to mock, and mock never touches the API.
 
 ## Notes
 
