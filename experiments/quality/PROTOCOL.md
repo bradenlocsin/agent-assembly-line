@@ -49,6 +49,15 @@ strong single model?
 sign test needs about 15 wins out of 20 non-tied leads to reach p < 0.05. A null result at n=20 means
 "no large effect found", not "no effect".
 
+## Provider
+
+The experiment can run on Anthropic directly or through OpenRouter (`--provider openrouter`). One
+run uses one provider for all three arms, so every arm calls the same model IDs. On OpenRouter,
+requests are pinned to Anthropic's own servers with no fallback. The manifest records which exact
+model build served each alias (`served_models`), and the run warns if they differ. Costs are
+OpenRouter's billed amounts. Provider choice doesn't change prompts, evidence, schemas, budgets,
+blinding or scoring.
+
 ## Pilot first
 
 `--leads 3` runs a pre-registered set: L01 (clear fit, owner named), L12 (almost no evidence, a trap
@@ -98,6 +107,8 @@ python -m pytest tests/test_experiment.py
 
 # Paid pilot: requires an API key in .env, explicit --approve-max-usd and typing SPEND
 python experiments/quality/exp.py run --real --leads 3 --approve-max-usd <ceiling printed by estimate>
+# ...or through OpenRouter (runs a free pre-flight first)
+python experiments/quality/exp.py run --real --provider openrouter --leads 3 --approve-max-usd <ceiling>
 
 # Review and score
 #   open runs/<run>/review.md, fill in runs/<run>/review_sheet.csv

@@ -85,7 +85,11 @@ class StationOutcome:
 
 
 # API errors where retrying or moving to the next item can't help.
-FATAL_ERRORS = {"AuthenticationError", "PermissionDeniedError", "NotFoundError", "BadRequestError"}
+FATAL_ERRORS = {"AuthenticationError", "PermissionDeniedError", "NotFoundError", "BadRequestError",
+                "UnsupportedModelError"}
+# 400 bad request, 401 bad key, 402 out of credits (OpenRouter), 403 key spending limit or
+# permission, 404 unknown model. Retrying any of these just repeats the failure.
+FATAL_STATUS = {400, 401, 402, 403, 404}
 
 
 async def run_station(client, ledger: Ledger, st: StationSpec, item_id: str, payload: dict,
@@ -113,7 +117,10 @@ async def run_station(client, ledger: Ledger, st: StationSpec, item_id: str, pay
                 err = f"timed out after {timeout_s}s"
             ledger.record(item_id, st.name, CallResult(text="", model=alias), attempt, ok=False,
                           escalated=alias != st.model, error=err)
-            if name in FATAL_ERRORS:
+            if name in FATAL_ERRORS or getattr(e, "status_code", None) in FATAL_STATUS:
+                status = getattr(e, "status_code", None)
+                if status == 402:
+                    err = f"402 insufficient credits: {err}"
                 return StationOutcome(None, err, fatal=err)
             feedback = None  # nothing the model did wrong; just try again
             last_err = err

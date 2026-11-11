@@ -10,6 +10,19 @@ from dataclasses import dataclass, field
 
 from .models import get_model
 
+PROVIDERS = {
+    "anthropic": {"key_env": "ANTHROPIC_API_KEY", "base_url": None},
+    # OpenRouter's Anthropic-compatible Messages endpoint (POST /api/v1/messages).
+    "openrouter": {"key_env": "OPENROUTER_API_KEY", "base_url": "https://openrouter.ai/api"},
+}
+# Ask OpenRouter to serve Claude from Anthropic itself, with no fallback to other hosts, so
+# every arm gets the same model build as the direct API.
+OPENROUTER_ROUTING = {"provider": {"order": ["anthropic"], "allow_fallbacks": False}}
+
+
+class UnsupportedModelError(Exception):
+    """The model has no verified ID on this provider. Fatal: stops the line before any request."""
+
 # If the API rejects this tool version, set WEB_SEARCH_TOOL_VERSION in .env to the
 # current one from https://platform.claude.com/docs (web search tool page).
 # Built at call time (not import time) so values from .env are honored.
@@ -35,25 +48,49 @@ class CallResult:
 
 
 class ClaudeClient:
-    """Thin async wrapper around the Anthropic SDK."""
+    """Thin async wrapper around the Anthropic SDK. Talks to Anthropic directly, or to
+    OpenRouter's Anthropic-compatible endpoint with provider="openrouter"."""
 
-    def __init__(self, max_attempts: int = 4, api=None):
+    def __init__(self, max_attempts: int = 4, api=None, provider: str = "anthropic", http_client=None):
+        if provider not in PROVIDERS:
+            raise ValueError(f"Unknown provider '{provider}' (use {', '.join(PROVIDERS)})")
+        self.provider = provider
         if api is not None:  # injected SDK client (tests use one with a fake HTTP transport)
             self.api = api
             return
         from anthropic import AsyncAnthropic  # imported lazily so mock mode needs no key
 
-        self.api = AsyncAnthropic(max_retries=max_attempts)
+        extra = {"http_client": http_client} if http_client is not None else {}
+        if provider == "openrouter":
+            key = os.getenv("OPENROUTER_API_KEY")
+            if not key:
+                raise SystemExit("OPENROUTER_API_KEY is not set (put it in .env).")
+            # auth_token -> "Authorization: Bearer". api_key=None stops the SDK from also sending
+            # an ANTHROPIC_API_KEY from the environment as x-api-key to OpenRouter.
+            self.api = AsyncAnthropic(api_key=None, auth_token=key, base_url=PROVIDERS["openrouter"]["base_url"],
+                                      max_retries=max_attempts, **extra)
+        else:
+            self.api = AsyncAnthropic(max_retries=max_attempts, **extra)
+
+    def model_id(self, alias: str) -> str:
+        m = get_model(alias)
+        if self.provider == "openrouter":
+            if not m.openrouter_id:
+                raise UnsupportedModelError(f"'{alias}' has no verified OpenRouter model ID")
+            return m.openrouter_id
+        return m.id
 
     async def call(self, alias: str, system: str, user: str, max_tokens: int,
                    tools: list[str] | None = None, schema: dict | None = None) -> CallResult:
-        model = get_model(alias)
+        model_id = self.model_id(alias)
         kwargs = {}
         if tools and "web_search" in tools:
             kwargs["tools"] = [web_search_tool()]
+        if self.provider == "openrouter":
+            kwargs["extra_body"] = OPENROUTER_ROUTING
         start = time.perf_counter()
         resp = await self.api.messages.create(
-            model=model.id,
+            model=model_id,
             max_tokens=max_tokens,
             # Cache the station's instructions: every item on the line reuses them.
             system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
@@ -64,6 +101,11 @@ class ClaudeClient:
         text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
         u = resp.usage
         stu = getattr(u, "server_tool_use", None)
+        # OpenRouter reports what it actually charged (usage.cost, USD). Prefer that over our
+        # own token arithmetic when it's there.
+        billed = getattr(u, "cost", None)
+        if billed is None and getattr(u, "model_extra", None):
+            billed = u.model_extra.get("cost")
         return CallResult(
             text=text,
             model=alias,
@@ -73,7 +115,9 @@ class ClaudeClient:
             cache_read=getattr(u, "cache_read_input_tokens", 0) or 0,
             web_searches=(getattr(stu, "web_search_requests", 0) or 0) if stu else 0,
             latency_s=latency,
-            extra={"stop_reason": getattr(resp, "stop_reason", None)},
+            extra={"stop_reason": getattr(resp, "stop_reason", None),
+                   "served_model": getattr(resp, "model", None),
+                   "billed_cost_usd": float(billed) if billed is not None else None},
         )
 
 
@@ -130,11 +174,10 @@ def fake_from_schema(schema: dict, rng: random.Random):
     return "mock text"
 
 
-def make_client(mock: bool, seed: int | None = None):
+def make_client(mock: bool, seed: int | None = None, provider: str = "anthropic"):
     if mock:
         return MockClient(fail_rate=float(os.getenv("MOCK_FAIL_RATE", "0.15")), seed=seed)
-    if not os.getenv("ANTHROPIC_API_KEY"):
-        raise SystemExit(
-            "No ANTHROPIC_API_KEY found. Put it in .env (see .env.example) or run with --mock."
-        )
-    return ClaudeClient()
+    env = PROVIDERS[provider]["key_env"]
+    if not os.getenv(env):
+        raise SystemExit(f"No {env} found. Put it in .env (see .env.example) or run with --mock.")
+    return ClaudeClient(provider=provider)

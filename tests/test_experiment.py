@@ -302,7 +302,7 @@ def test_fatal_error_aborts_experiment(tmp_path):
 
 @pytest.fixture
 def no_real_client(monkeypatch):
-    def boom():
+    def boom(*a, **k):
         raise AssertionError("a real client was created")
     monkeypatch.setattr(exp, "make_real_client", boom)
     monkeypatch.setattr(exp, "HERE", exp.HERE)  # runs dir stays in repo; cleaned by test

@@ -172,6 +172,31 @@ python experiments/quality/exp.py run --real --leads 3 --approve-max-usd <ceilin
 Real runs refuse to start without an API key, an explicit `--approve-max-usd` at or above the
 computed ceiling, and typing `SPEND`. They never fall back to mock, and mock never touches the API.
 
+## Using OpenRouter instead of an Anthropic key
+
+Add `--provider openrouter` to `line run`, `line kaizen`, or the experiment's `estimate`, `run`
+and `check-openrouter`. It uses OpenRouter's Anthropic-compatible endpoint
+(`https://openrouter.ai/api/v1/messages`) through the same SDK, with the same prompts, schemas and
+budget rules. Requests are pinned to Anthropic as the serving provider with no fallbacks, so you
+get the same model builds as the direct API.
+
+| Alias | Anthropic ID | OpenRouter ID | $/M in / out |
+|---|---|---|---|
+| haiku | claude-haiku-5-5 | anthropic/claude-haiku-5.5 | 0.10 / 0.50 |
+| sonnet | claude-sonnet-5-5 | anthropic/claude-sonnet-5.5 | 2 / 10 |
+| opus | claude-opus-5-5 | anthropic/claude-opus-5.5 | 4 / 20 |
+
+Fable has no verified OpenRouter ID yet and is refused on that provider.
+
+```bash
+bash scripts/set-openrouter-key.sh     # hidden input; writes OPENROUTER_API_KEY to .env (chmod 600)
+python experiments/quality/exp.py check-openrouter   # free: checks IDs, live prices, key limit
+```
+
+On OpenRouter the ledger records the cost OpenRouter actually billed (`usage.cost`) and uses it for
+the budget, with our own estimate kept next to it for comparison. A 401 (bad key), 402 (out of
+credits) or 403 (key spending limit) stops the line on the first call.
+
 ## Notes
 
 - The web search tool version is set in `.env` (`WEB_SEARCH_TOOL_VERSION`). If the API rejects it, update it from the docs.

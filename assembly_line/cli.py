@@ -68,7 +68,7 @@ def cmd_run(a):
     items = load_items(a.input)
     if a.limit:
         items = items[: a.limit]
-    client = make_client(a.mock, seed=a.seed)
+    client = make_client(a.mock, seed=a.seed, provider=a.provider)
     run_dir = asyncio.run(Line(spec, client, Path(a.runs_dir), seed=a.seed).run(items))
     print()
     print((run_dir / "report.md").read_text())
@@ -112,7 +112,7 @@ def cmd_kaizen(a):
     if a.mock:
         text = "_Mock mode: run without --mock to get real kaizen suggestions from Opus._"
     else:
-        client = make_client(False)
+        client = make_client(False, provider=a.provider)
         res = asyncio.run(client.call(a.model, KAIZEN_PROMPT, user, 4000))
         text = res.text
     out = run_dir / "kaizen.md"
@@ -147,6 +147,7 @@ def main(argv=None):
     r.add_argument("--concurrency", type=int, help="override concurrency")
     r.add_argument("--seed", type=int, help="seed for inspector sampling and mock workers (reproducible mock runs)")
     r.add_argument("--runs-dir", default="runs")
+    r.add_argument("--provider", choices=["anthropic", "openrouter"], default="anthropic")
     r.set_defaults(fn=cmd_run)
 
     rp = sub.add_parser("report", help="print the report for a past run")
@@ -163,6 +164,7 @@ def main(argv=None):
     k.add_argument("run_dir")
     k.add_argument("--model", default="opus")
     k.add_argument("--mock", action="store_true")
+    k.add_argument("--provider", choices=["anthropic", "openrouter"], default="anthropic")
     k.set_defaults(fn=cmd_kaizen)
 
     m = sub.add_parser("models", help="show models and prices")

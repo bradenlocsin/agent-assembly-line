@@ -32,10 +32,11 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(ROOT))
 
-from assembly_line.client import MockClient  # noqa: E402
+from assembly_line import openrouter  # noqa: E402
+from assembly_line.client import PROVIDERS, MockClient  # noqa: E402
 from assembly_line.config import LineSpec, StationSpec, load_line  # noqa: E402
 from assembly_line.line import Line, system_prompt  # noqa: E402
-from assembly_line.models import cost_usd, next_up  # noqa: E402
+from assembly_line.models import cost_usd, get_model, next_up  # noqa: E402
 
 WORKFLOWS = ["single_haiku", "single_sonnet", "assembly_line"]
 STEPS = ["enrich", "score", "draft"]
@@ -199,11 +200,11 @@ def ledger_by_item(run_dir: Path) -> dict[str, list[dict]]:
 
 
 def run_experiment(specs, leads, client, out_dir: Path, mode: str, budget: float, seed: int,
-                   inspector: str) -> Path:
+                   inspector: str, provider: str = "anthropic") -> Path:
     out_dir.mkdir(parents=True)
     order = list(WORKFLOWS)
     random.Random(seed).shuffle(order)  # don't always run the same workflow first
-    manifest = {"mode": mode, "started": time.strftime("%Y-%m-%d %H:%M:%S"), "git_commit": git_commit(),
+    manifest = {"mode": mode, "provider": provider, "started": time.strftime("%Y-%m-%d %H:%M:%S"), "git_commit": git_commit(),
                 "leads": [l["id"] for l in leads], "workflow_order": order, "seed": seed,
                 "budget_per_workflow": budget, "inspector": inspector,
                 "models": {wf: [(s.name, s.model, s.escalate_to) for s in specs[wf].stations] for wf in order}}
@@ -253,6 +254,19 @@ def run_experiment(specs, leads, client, out_dir: Path, mode: str, budget: float
             print(f"ABORTING experiment: {manifest['aborted']}")
             break
     (out_dir / "results.jsonl").write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
+    # Which exact model builds served each alias, across all arms (they should match).
+    served: dict[str, set] = {}
+    sources: dict[str, int] = {}
+    for led in (out_dir / "workflows").glob("*/ledger.jsonl"):
+        for e in load_jsonl(led):
+            if e.get("served_model"):
+                served.setdefault(e["model"], set()).add(e["served_model"])
+            sources[e.get("cost_source", "estimated")] = sources.get(e.get("cost_source", "estimated"), 0) + 1
+    manifest["served_models"] = {k: sorted(v) for k, v in served.items()}
+    manifest["model_versions_consistent"] = all(len(v) == 1 for v in served.values())
+    manifest["cost_sources"] = sources
+    if not manifest["model_versions_consistent"]:
+        print(f"WARNING: different model builds served the same alias: {manifest['served_models']}")
     manifest["total_cost_usd"] = sum(manifest.get("workflow_cost_usd", {}).values())
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
     return out_dir
@@ -571,21 +585,77 @@ def score(run_dir: Path, review_files: list[Path], seed: int = 0) -> str:
 
 # ---------------------------------------------------------------- CLI
 
-def make_real_client():
+def make_real_client(provider: str = "anthropic"):
     from assembly_line.client import ClaudeClient
-    return ClaudeClient()
+    return ClaudeClient(provider=provider)
+
+
+def models_needed(specs: dict[str, LineSpec]) -> list[str]:
+    """Every model a run could call, including escalations and the inspector."""
+    need = set()
+    for spec in specs.values():
+        for st in spec.stations:
+            need.add(st.model)
+            if st.escalate_to:
+                need.add(st.escalate_to)
+        if spec.inspector:
+            need.add(spec.inspector.model)
+    order = ["haiku", "sonnet", "opus", "fable"]
+    return [m for m in order if m in need]
+
+
+def print_models(specs, provider: str):
+    print(f"Provider: {provider}. Models this run can call (same IDs for every arm):")
+    for alias in models_needed(specs):
+        m = get_model(alias)
+        mid = m.openrouter_id if provider == "openrouter" else m.id
+        print(f"  {alias:7} {mid or 'NOT AVAILABLE ON THIS PROVIDER':30} "
+              f"${m.price.input:.2f} in / ${m.price.output:.2f} out per M tokens")
+    for wf in WORKFLOWS:
+        plan = " → ".join(f"{st.name}:{st.model}(→{st.escalate_to})" for st in specs[wf].stations)
+        print(f"  {wf:14} {plan}")
+
+
+def load_env():
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(ROOT / ".env")
+    except ImportError:
+        pass
 
 
 def cmd_estimate(a):
     leads = load_leads(a.leads)
-    est = estimate(build_workflows(a.inspector), leads, a.budget_per_workflow)
+    specs = build_workflows(a.inspector)
+    print_models(specs, a.provider)
+    print()
+    est = estimate(specs, leads, a.budget_per_workflow)
     print_estimate(est, len(leads), a.inspector)
     return est
+
+
+def cmd_check_openrouter(a):
+    """Free: reads OpenRouter's public model list and your key's limit. No model calls."""
+    load_env()
+    key = os.getenv("OPENROUTER_API_KEY")
+    if not key:
+        sys.exit("OPENROUTER_API_KEY is not set in .env. Run: bash scripts/set-openrouter-key.sh")
+    specs = build_workflows(a.inspector)
+    est = estimate(specs, load_leads(a.leads), a.budget_per_workflow)
+    res = openrouter_preflight(key, models_needed(specs), est["_total"]["ceiling"])
+    openrouter.print_preflight(res)
+    return res
+
+
+def openrouter_preflight(key, aliases, ceiling):
+    return openrouter.preflight(key, aliases, ceiling)
 
 
 def cmd_run(a):
     leads = load_leads(a.leads)
     specs = build_workflows(a.inspector)
+    print_models(specs, a.provider)
+    print()
     est = estimate(specs, leads, a.budget_per_workflow)
     print_estimate(est, len(leads), a.inspector)
     print()
@@ -596,23 +666,36 @@ def cmd_run(a):
             load_dotenv(ROOT / ".env")
         except ImportError:
             pass
-        if not os.getenv("ANTHROPIC_API_KEY"):
-            sys.exit("REAL run refused: ANTHROPIC_API_KEY is not set. (Not falling back to mock.)")
+        key_env = PROVIDERS[a.provider]["key_env"]
+        if not os.getenv(key_env):
+            sys.exit(f"REAL run refused: {key_env} is not set for provider '{a.provider}'. "
+                     f"(Not falling back to another provider or to mock.)")
+        missing = [m for m in models_needed(specs)
+                   if a.provider == "openrouter" and not get_model(m).openrouter_id]
+        if missing:
+            sys.exit(f"REAL run refused: no verified OpenRouter ID for {', '.join(missing)}.")
         ceiling = est["_total"]["ceiling"]
         if a.approve_max_usd is None or a.approve_max_usd < ceiling:
             sys.exit(f"REAL run refused: the hard ceiling is ${ceiling:.4f}. Re-run with "
                      f"--approve-max-usd {math.ceil(ceiling * 100) / 100:.2f} (or higher) to approve it.")
+        if a.provider == "openrouter":
+            res = openrouter_preflight(os.getenv(key_env), models_needed(specs), ceiling)
+            openrouter.print_preflight(res)
+            if res["problems"]:
+                sys.exit("REAL run refused: OpenRouter pre-flight found problems (above). Nothing was spent.")
         if not a.yes:
             if not sys.stdin.isatty():
                 sys.exit("REAL run refused: no terminal to confirm in. Add --yes only if you mean it.")
-            ans = input(f"This will make PAID API calls, up to ${ceiling:.4f}. Type SPEND to continue: ")
+            ans = input(f"This will make PAID API calls via {a.provider}, up to ${ceiling:.4f}. "
+                        f"Type SPEND to continue: ")
             if ans.strip() != "SPEND":
                 sys.exit("Cancelled. Nothing was spent.")
-        client, mode = make_real_client(), "REAL"
+        client, mode = make_real_client(a.provider), "REAL"
     else:
         client, mode = MockClient(fail_rate=a.mock_fail_rate, seed=a.seed), "MOCK"
-    out = HERE / "runs" / f"{time.strftime('%Y%m%d-%H%M%S')}-{mode}-{len(leads)}leads"
-    run_experiment(specs, leads, client, out, mode, a.budget_per_workflow, a.seed, a.inspector)
+    out = HERE / "runs" / f"{time.strftime('%Y%m%d-%H%M%S')}-{mode}-{a.provider}-{len(leads)}leads"
+    run_experiment(specs, leads, client, out, mode, a.budget_per_workflow, a.seed, a.inspector,
+                   provider=a.provider)
     make_blind(out, a.seed)
     print(score(out, []))
     print(f"\nRun folder: {out}")
@@ -629,10 +712,15 @@ def main(argv=None):
         p.add_argument("--leads", type=int, default=3, help="3 = pre-registered pilot set; 20 = all")
         p.add_argument("--inspector", choices=["none", "all"], default="none")
         p.add_argument("--budget-per-workflow", type=float, default=0.20)
+        p.add_argument("--provider", choices=["anthropic", "openrouter"], default="anthropic")
 
     e = sub.add_parser("estimate")
     common(e)
     e.set_defaults(fn=cmd_estimate)
+
+    c = sub.add_parser("check-openrouter", help="free: verify model IDs, prices and your key's limit")
+    common(c)
+    c.set_defaults(fn=cmd_check_openrouter)
 
     r = sub.add_parser("run")
     common(r)

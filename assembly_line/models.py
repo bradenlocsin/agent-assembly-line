@@ -1,6 +1,8 @@
 """Model catalog and pricing (USD per million tokens).
 
 Prices from https://platform.claude.com/docs/en/about-claude/pricing (checked Nov 2026).
+OpenRouter lists the same standard prices for these models (openrouter.ai model pages, Nov 2026),
+and `exp.py` re-checks them against OpenRouter's live model list before any paid run.
 If Anthropic changes prices, update this file and nothing else.
 """
 from dataclasses import dataclass
@@ -23,6 +25,7 @@ class Model:
     id: str
     price: Price
     long_price: Price | None = None  # Haiku 5.5 charges more for prompts > 100K tokens
+    openrouter_id: str | None = None  # None = not verified on OpenRouter; refused there
 
 
 MODELS: dict[str, Model] = {
@@ -30,9 +33,12 @@ MODELS: dict[str, Model] = {
         "haiku", "claude-haiku-5-5",
         Price(0.10, 0.50, 0.125, 0.01),
         long_price=Price(0.50, 2.50, 0.625, 0.05),
+        openrouter_id="anthropic/claude-haiku-5.5",
     ),
-    "sonnet": Model("sonnet", "claude-sonnet-5-5", Price(2.00, 10.00, 2.50, 0.10)),
-    "opus": Model("opus", "claude-opus-5-5", Price(4.00, 20.00, 5.00, 0.20)),
+    "sonnet": Model("sonnet", "claude-sonnet-5-5", Price(2.00, 10.00, 2.50, 0.10),
+                    openrouter_id="anthropic/claude-sonnet-5.5"),
+    "opus": Model("opus", "claude-opus-5-5", Price(4.00, 20.00, 5.00, 0.20),
+                  openrouter_id="anthropic/claude-opus-5.5"),
     "fable": Model("fable", "claude-fable-5-2", Price(8.00, 40.00, 10.00, 0.20)),
 }
 

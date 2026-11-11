@@ -25,6 +25,9 @@ class Entry:
     latency_s: float
     escalated: bool = False
     error: str | None = None
+    cost_source: str = "estimated"        # "billed" when the provider reported the charge
+    estimated_cost_usd: float | None = None
+    served_model: str | None = None
 
 
 class Ledger:
@@ -39,14 +42,18 @@ class Ledger:
         return self._spent
 
     def record(self, item_id, station, result, attempt, ok, escalated=False, error=None) -> Entry:
+        estimated = cost_usd(result.model, result.input_tokens, result.output_tokens,
+                             result.cache_write, result.cache_read, result.web_searches)
+        billed = result.extra.get("billed_cost_usd")
         e = Entry(
             item_id=item_id, station=station, model=result.model, attempt=attempt, ok=ok,
             input_tokens=result.input_tokens, output_tokens=result.output_tokens,
             cache_write=result.cache_write, cache_read=result.cache_read,
             web_searches=result.web_searches,
-            cost_usd=cost_usd(result.model, result.input_tokens, result.output_tokens,
-                              result.cache_write, result.cache_read, result.web_searches),
+            cost_usd=billed if billed is not None else estimated,
             latency_s=round(result.latency_s, 3), escalated=escalated, error=error,
+            cost_source="billed" if billed is not None else "estimated",
+            estimated_cost_usd=estimated, served_model=result.extra.get("served_model"),
         )
         self.entries.append(e)
         self._spent += e.cost_usd
